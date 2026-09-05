@@ -15,6 +15,7 @@ import pandas as pd
 from pandas._libs.missing import NAType
 
 FASTQ_EXT = (".fastq", ".fq", ".fastq.gz", ".fq.gz")
+FASTA_EXT = (".fasta", ".fa", ".fasta.gz", ".fa.gz", ".fna", ".fna.gz")
 
 R1_PATTERN = re.compile(r"(?:_R?1)(?:_[\w]+)?$")
 R2_PATTERN = re.compile(r"(?:_R?2)(?:_[\w]+)?$")
@@ -97,6 +98,30 @@ class Fastq:
             "genome_size": self.genome_size,
         }
 
+class Fasta:
+    def __init__(
+        self,
+        path: str | Path,
+        ID: str | None = None,
+    ) -> None:
+        self.path = Path(path)
+        self.ID = ID
+
+    def _get_fasta_id(self) -> str:
+        """Remove extensions from file name and get ID"""
+        name = self.path.name
+        for ext in sorted(FASTA_EXT, key=len, reverse=True):  # longest first, e.g. .fasta.gz before .gz
+            if name.endswith(ext):
+                return name[: -len(ext)]
+        return name
+
+    def to_dict(self) -> dict:
+        """Create a dictionary of class properties for addition to DataFrame"""
+        self.ID = self._get_fasta_id()
+        return {
+            "ID": self.ID,
+            "fasta": self.path,
+        }
 
 class ManifestParser:
     def __init__(self, df: pd.DataFrame, mode: str, method: str) -> None:
@@ -112,7 +137,7 @@ class ManifestParser:
         n_list = len(id_list)
         n_set = len(id_set)
 
-        multipliers = {"long": 1, "short": 2, "hybrid": 3}
+        multipliers = {"long": 1, "short": 2, "hybrid": 3, "fasta": 1}
         expected = multipliers[self.mode] * n_set
         n_dup = max(0, n_list - expected)
 
@@ -123,12 +148,12 @@ class ManifestParser:
 
     def _no_duplicates(self) -> pd.DataFrame:
         """Handle case where no duplicates are found"""
-        manifest = self.df.groupby("ID", as_index=False).first()  # Collapse DataFrame
-        if self.mode != "short":
-            manifest = manifest.dropna(subset=["long_fastq"])
+        manifest_df = self.df.groupby("ID", as_index=False).first()  # Collapse DataFrame
+        if self.mode != "short" and self.mode != "fasta":
+            manifest_df = manifest_df.dropna(subset=["long_fastq"])
         else:
-            manifest = manifest.dropna()
-        return manifest
+            manifest_df = manifest_df.dropna()
+        return manifest_df
 
     def _pair_reads(self) -> pd.DataFrame:
         """Pair short and hybrid reads"""
@@ -150,7 +175,7 @@ class ManifestParser:
             sys.exit(1)
 
         df = self.df
-        if self.mode != "long":
+        if self.mode != "long" and self.mode != "fasta":
             paired_df = self._pair_reads()
             df = paired_df
 
@@ -237,9 +262,9 @@ def parse_args():
         "-m",
         "--mode",
         type=str,
-        choices=["short", "long", "hybrid"],
+        choices=["short", "long", "hybrid", "fasta"],
         default="short",
-        help="Build a short, long or hybrid manifest (default = short)",
+        help="Build a short, long, hybrid or fasta manifest (default = short)",
     )
     flags.add_argument(
         "-o",
@@ -285,7 +310,7 @@ def parse_args():
         "-v",
         "--verbose",
         action="store_true",
-        help="enable verbose logging",
+        help="Enable verbose logging",
     )
     return parser.parse_args()
 
@@ -358,21 +383,24 @@ def get_headers(mode: str) -> list[str]:
         return ["ID", "long_fastq", "genome_size"]
     if mode == "hybrid":
         return ["ID", "R1", "R2", "long_fastq", "genome_size"]
+    if mode == "fasta":
+        return ["ID", "fasta"]
 
 
-def walk(root: Path, max_depth: int) -> list[Path]:
+def walk(root: Path, max_depth: int, file_type: str) -> list[Path]:
     """
-    Search director(y/ies) for fastq files
+    Search director(y/ies) for {file_type} files
 
     Args:
         root: Path to root directory
         max_depth: Max depth for recursive file search
+        file_type: Type of files to search for (fastq/fasta)
 
     Returns:
-        fastqs: List of fastq's
+        fast_files: List of {file_type} files
     """
     base_depth = str(root).count(os.sep)
-    fastqs = []
+    fast_files = []
 
     for path, dirs, files in os.walk(root):
         dirs[:] = [d for d in dirs if d != "work"]  # skip nextflow work directories
@@ -381,38 +409,41 @@ def walk(root: Path, max_depth: int) -> list[Path]:
         if depth >= max_depth:
             dirs[:] = []
 
+        ext = FASTQ_EXT if file_type == "fastq" else FASTA_EXT
+
         for f in files:
-            if f.endswith(FASTQ_EXT):
-                fastqs.append(Path(path) / f)
-    return fastqs
+            if f.endswith(ext):
+                fast_files.append(Path(path) / f)
+    return fast_files
 
 
-def collect_reads(dir_list: list[Path], max_depth: int) -> list[Path]:
+def collect_files(dir_list: list[Path], max_depth: int, file_type: str) -> list[Path]:
     """
     Wrapper for walk function
 
     Args:
         dir_list: List of directories to search
         max_depth: Max depth for recursive dir search
+        file_type: Type of files to search for
 
     Returns:
-        reads: List of Fastq's
+        files: List of files found in directories
     """
-    reads = []
+    files = []
     for dir in dir_list:
-        fastqs = walk(dir, max_depth)
-        reads += fastqs
-    return reads
+        fast_files = walk(dir, max_depth, file_type)
+        files += fast_files
+    return files
 
 
 def main():
     """
     Step 0: Parse args and setup logging
 
-    Step 1: Collect a list of fastq file paths from all input flags
+    Step 1: Collect a list of fast(q/a) file paths from all input flags
 
     Step 2: Initialise DataFrame and loop over main_list:
-        - Extract ID and assign fastq read type (R1, R2, long_fastq)
+        - Extract ID and assign file type (R1, R2, long_fastq, fasta)
         - Insert information into DataFrame
 
     Step 3: Check dataframe for duplicates and missing values
@@ -424,47 +455,53 @@ def main():
     validate_args(args)
     args.outdir.mkdir(parents=True, exist_ok=True)
 
+    file_type = "fastq" if args.mode != "fasta" else "fasta"
+
     """
     Step 1
     """
-    logging.info("Step 1: Gather fastq's")
+    logging.info("Step 1: Gather " + file_type + "'s")
 
-    read_list = []
+    fast_list = []
 
-    if args.from_dir:  # add fastqs to read_list
-        read_list += collect_reads(args.from_dir, 0)
+    if args.from_dir:  # add fast(q/a)'s to fast_list
+        fast_list += collect_files(args.from_dir, 0, file_type)
 
-    if args.from_dir_recursive:  # add fastqs to read_list
-        read_list += collect_reads(args.from_dir_recursive, args.max_depth)
+    if args.from_dir_recursive:  # add fast(q/a)'s to fast_list
+        fast_list += collect_files(args.from_dir_recursive, args.max_depth, file_type)
 
-    if args.from_paths:  # add fastqs to read_list
+    if args.from_paths:  # add fast(q/a)'s to fast_list
         with open(args.from_paths) as f:
-            read_list += [line.strip() for line in f]
+            fast_list += [line.strip() for line in f]
 
     if args.from_paths_id:
         id_paths = pd.read_csv(args.from_paths_id)
         for _, row in id_paths.iterrows():
-            read_list.append((row["ID"], row["path"]))
+            fast_list.append((row["ID"], row["path"]))
 
     """
     Step 2
     """
-    logging.info("Step 2: Assign read properties")
+    logging.info("Step 2: Assign fast(q/a) properties")
 
     rows = []
-    for read in read_list:
-        if args.mode != "hybrid":
-            read = Fastq(path=read)
+    for f in fast_list:
+        if args.mode == "fasta":
+            file = Fasta(path=f)
+        elif args.mode != "hybrid":
+            file = Fastq(path=f)
         else:
-            read = Fastq(ID=read[0], path=read[1])
+            file = Fastq(ID=f[0], path=f[1])
 
-        read.assign_properties(args.mode)
+        if args.mode != "fasta":
+            file.assign_properties(args.mode)
+
         if args.genome_size:
-            logging.info(f"Estimating genome size for {read.ID}")
-            size = read.estimate_genome_size(args.threads)
-            read.genome_size = size
+            logging.info(f"Estimating genome size for {file.ID}") # estimate genome size should move to separate function
+            size = file.estimate_genome_size(args.threads)
+            file.genome_size = size
 
-        rows.append(read.to_dict())
+        rows.append(file.to_dict()) # both Fasta and Fastq classes have 'to_dict' method
 
     headers = get_headers(args.mode)
     df = pd.DataFrame(rows, columns=headers).sort_values("ID")
@@ -474,7 +511,7 @@ def main():
     """
     logging.info("Step 3: Process DataFrame")
 
-    df = ManifestParser(df, args.mode, args.duplicate_handling).handle_duplicates()
+    df = ManifestParser(df, args.mode, args.duplicate_handling).handle_duplicates() # ManifestParser class to move to sep function
 
     if df.empty:
         logging.error("Final manifest contains no data, exiting...")
