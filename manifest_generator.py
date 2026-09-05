@@ -113,10 +113,11 @@ class Fasta:
         for ext in sorted(FASTA_EXT, key=len, reverse=True):  # longest first, e.g. .fasta.gz before .gz
             if name.endswith(ext):
                 return name[: -len(ext)]
-        self.ID = name
+        return name
 
     def to_dict(self) -> dict:
         """Create a dictionary of class properties for addition to DataFrame"""
+        self.ID = self._get_fasta_id()
         return {
             "ID": self.ID,
             "fasta": self.path,
@@ -148,7 +149,7 @@ class ManifestParser:
     def _no_duplicates(self) -> pd.DataFrame:
         """Handle case where no duplicates are found"""
         manifest_df = self.df.groupby("ID", as_index=False).first()  # Collapse DataFrame
-        if self.mode != "short":
+        if self.mode != "short" and self.mode != "fasta":
             manifest_df = manifest_df.dropna(subset=["long_fastq"])
         else:
             manifest_df = manifest_df.dropna()
