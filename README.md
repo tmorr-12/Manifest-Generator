@@ -1,6 +1,6 @@
 # Manifest Generator
 
-Wellcome to Manifest Generator, the swiss army knife of manifest generation! Manifest generator is a command-line tool for generating sample manifests from FASTQ files, supporting short, long, and hybrid sequencing read types.
+Wellcome to Manifest Generator, the swiss army knife of manifest generation! Manifest generator is a command-line tool for generating sample manifests from FASTQ and FASTA files. It supports short, long, and hybrid sequencing read types, and can produce a single manifest from multiple input sources.
 
 ---
 
@@ -52,15 +52,21 @@ Combines short read pairs with a long read per sample.
 
 Output columns: `ID`, `R1`, `R2`, `long_fastq`, `genome_size`
 
+### `fasta`
+
+Assigns fasta files to sample IDs.
+
+Output colums: `ID`, `fasta`
+
 ---
 
 ## Input Sources
 
 | Source                                   | Description                                                                             |
 | ---------------------------------------- | --------------------------------------------------------------------------------------- |
-| `--from_dir <dir> [<dir> ...]`           | Collect FASTQs by searching one or more directories                                     |
-| `--from_dir_recursive <dir> [<dir> ...]` | Collect FASTQs by recursively searching one or more directories(requires `--max_depth`) |
-| `--from_paths <file>`                    | Supply a list of FASTQ file paths from which to build a manifest                        |
+| `--from_dir <dir> [<dir> ...]`           | Collect FAST(Q/A)s by searching one or more directories                                     |
+| `--from_dir_recursive <dir> [<dir> ...]` | Collect FAST(Q/A)s by recursively searching one or more directories(requires `--max_depth`) |
+| `--from_paths <file>`                    | Supply a list of FAST(Q/A)s file paths from which to build a manifest                        |
 | `--from_paths_id <file>`                 | Supply a csv containing paired read paths with ID                                       |
 
 ---
@@ -69,7 +75,7 @@ Output columns: `ID`, `R1`, `R2`, `long_fastq`, `genome_size`
 
 | Flag                   | Default        | Description                                             |
 | ---------------------- | -------------- | ------------------------------------------------------- |
-| `-m`, `--mode`         | `short`        | Manifest type: `short`, `long`, or `hybrid`             |
+| `-m`, `--mode`         | `short`        | Manifest type: `short`, `long`, `hybrid` or `fasta`             |
 | `-o`, `--outdir`       | `./`           | Output directory                                        |
 | `-n`, `--name`         | `manifest.csv` | Now YOU can name your very own manifest!                |
 | `-d`, `--max_depth`    | `None`         | Max directory depth for `--from_dir_recursive`          |
@@ -104,7 +110,8 @@ Recommended usage:
 
 IDs will only be parsed correctly from filenames with the following rules:
 
-- Filenames must match one of the following suffixes: `.fastq`, `.fq`, `.fastq.gz`, `.fq.gz`
+- FASTQ filenames must match one of the following suffixes: `.fastq`, `.fq`, `.fastq.gz`, `.fq.gz`
+- FASTA filesnames must match one of the following suffixes: `.fasta`, `.fa`, `.fna`, `.fasta.gz`, `.fa.gz`, `.fna.gz`
 - For the `short` mode, presence of `_R1` or `_1` are used to infer R1 files, while `_R2` or `_2` are used to infer R2 files.
   > :warning: IDs will not be correctly extracted from filenames that contain these patterns (`_R?[12]`) internally, e.g. `file_1_1.fastq.gz`.
 
@@ -133,10 +140,9 @@ manifest_generator.py --from_paths_id paths_id.csv -m hybrid -o ./output
 
 ## Output
 
-A `.csv` manifest is written to `--outdir` with the filename specified by `--name`. A timestamped log file is also written to the same directory.
+A `.csv` manifest is written to `--outdir` with the filename specified by `--name`.
 
 ```
 output/
-├── manifest.csv
-└── 2025-01-01_12-00-00.log
+└── manifest.csv
 ```
